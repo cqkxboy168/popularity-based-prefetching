@@ -1,0 +1,159 @@
+diff -rupN dnsmasq-2.57/src/cache.c dnsmasq-2.57-loghits/src/cache.c
+--- dnsmasq-2.57/src/cache.c	2012-04-28 16:29:58.485904715 -0400
++++ dnsmasq-2.57-loghits/src/cache.c	2012-04-28 16:30:17.830457926 -0400
+@@ -567,8 +567,42 @@ struct crec *cache_find_by_name(struct c
+   if (ans && 
+       (ans->flags & F_FORWARD) &&
+       (ans->flags & prot) &&
+-      hostname_isequal(cache_get_name(ans), name))
+-    return ans;
++      hostname_isequal(cache_get_name(ans), name)){
++		char *a,*logstr, *tmpaddrbuff;
++		int htype;
++		tmpaddrbuff = whine_malloc(ADDRSTRLEN);
++		my_syslog(LOG_INFO,"%s %d",name,ans->flags);
++		if (!(ans->flags & F_CNAME)){
++#ifdef HAVE_IPV6
++			if (ans->flags & F_IPV4)
++	  			inet_ntop(AF_INET, &ans->addr.addr, tmpaddrbuff, ADDRSTRLEN);
++			else if (ans->flags & F_IPV6)
++	  			inet_ntop(AF_INET6, &ans->addr.addr, tmpaddrbuff, ADDRSTRLEN);
++			a = tmpaddrbuff;
++#else
++			a = inet_ntoa(cache->addr.addr.addr.addr4);
++#endif
++			htype = 1;
++		}
++		else{
++			a = cache_get_name(ans->addr.cname.cache);
++			htype = 0;
++		}
++		logstr = whine_malloc(strlen(name)+strlen(a)+40);
++		if (htype == 1){
++			sprintf(logstr,"%s addr %s",name,a);
++		}
++		else{
++			sprintf(logstr,"%s cname %s",name,a);
++		}
++		//my_syslog(LOG_INFO,logstr);
++		sprintf(logstr,"%s %lu",logstr,now);
++    		cachehitlog(logstr);
++		//free(tmpaddrbuff);
++		free(logstr);
++		free(tmpaddrbuff);
++    		return ans;
++	}
+   
+   return NULL;
+ }
+@@ -1073,7 +1107,9 @@ void dump_cache(time_t now)
+       struct crec *cache ;
+       int i;
+       my_syslog(LOG_INFO, "Host                                     Address                        Flags     Expires");
+-    
++      extern char cachedumpfn[],cachehitfn[];
++      extern FILE *cachedumpfp;
++      cachedumpfp = fopen(cachedumpfn,"w");
+       for (i=0; i<hash_size; i++)
+ 	for (cache = hash_table[i]; cache; cache = cache->hash_next)
+ 	  {
+@@ -1114,12 +1150,22 @@ void dump_cache(time_t now)
+ #ifdef HAVE_BROKEN_RTC
+ 	    p += sprintf(p, "%lu", cache->flags & F_IMMORTAL ? 0: (unsigned long)(cache->ttd - now));
+ #else
++	    //p += sprintf(p, "%lu %lu %lu", cache->flags & F_IMMORTAL ? 0: (unsigned long)(cache->ttd - now),cache->ttd,now);
+ 	    p += sprintf(p, "%s", cache->flags & F_IMMORTAL ? "\n" : ctime(&(cache->ttd)));
+ 	    /* ctime includes trailing \n - eat it */
+-	    *(p-1) = 0;
++	    //*(p-1) = 0;
+ #endif
++	    //if (((cache->flags & F_CNAME) != 0) && ((cache->flags & F_HOSTS) != 0))
++	    if (!(cache->flags & F_HOSTS)){
++		if (cache->flags & F_CNAME)
++	    		fprintf(cachedumpfp,"%s cname %s %lu %lu\n",cache_get_name(cache),a,cache->ttd,now); 
++		else
++	    		fprintf(cachedumpfp,"%s addr %s %lu %lu\n",cache_get_name(cache),a,cache->ttd,now); 
++	    }	
+ 	    my_syslog(LOG_INFO, daemon->namebuff);
+ 	  }
++	fclose(cachedumpfp);
++	cachelog_init(cachehitfn);
+     }
+ }
+ 
+Binary files dnsmasq-2.57/src/dnsmasq and dnsmasq-2.57-loghits/src/dnsmasq differ
+diff -rupN dnsmasq-2.57/src/dnsmasq.c dnsmasq-2.57-loghits/src/dnsmasq.c
+--- dnsmasq-2.57/src/dnsmasq.c	2012-04-28 16:29:58.485904715 -0400
++++ dnsmasq-2.57-loghits/src/dnsmasq.c	2012-04-28 16:30:17.834458044 -0400
+@@ -83,6 +83,7 @@ int main (int argc, char **argv)
+   long i, max_fd = sysconf(_SC_OPEN_MAX);
+   char *baduser = NULL;
+   int log_err;
++  extern char cachehitfn[],cachedumpfn[];
+ #if defined(HAVE_LINUX_NETWORK)
+   cap_user_header_t hdr = NULL;
+   cap_user_data_t data = NULL;
+@@ -111,6 +112,8 @@ int main (int argc, char **argv)
+   umask(022); /* known umask, create leases and pid files as 0644 */
+ 
+   read_opts(argc, argv, compile_opts);
++  cachelog_init(cachehitfn);
++  cachelog_init(cachedumpfn);
+     
+   if (daemon->edns_pktsz < PACKETSZ)
+     daemon->edns_pktsz = PACKETSZ;
+diff -rupN dnsmasq-2.57/src/dnsmasq.h dnsmasq-2.57-loghits/src/dnsmasq.h
+--- dnsmasq-2.57/src/dnsmasq.h	2012-04-28 16:29:58.485904715 -0400
++++ dnsmasq-2.57-loghits/src/dnsmasq.h	2012-04-28 16:30:17.834458044 -0400
+@@ -796,6 +796,8 @@ int read_write(int fd, unsigned char *pa
+ /* log.c */
+ void die(char *message, char *arg1, int exit_code);
+ int log_start(struct passwd *ent_pw, int errfd);
++void cachelog_init(char fn[]);
++void cachehitlog(const char *cstr);
+ int log_reopen(char *log_file);
+ void my_syslog(int priority, const char *format, ...);
+ void set_log_writer(fd_set *set, int *maxfdp);
+diff -rupN dnsmasq-2.57/src/log.c dnsmasq-2.57-loghits/src/log.c
+--- dnsmasq-2.57/src/log.c	2012-04-28 16:29:58.485904715 -0400
++++ dnsmasq-2.57-loghits/src/log.c	2012-04-28 16:30:17.830457926 -0400
+@@ -43,6 +43,10 @@ static int entries_lost = 0;
+ static int connection_good = 1;
+ static int max_logs = 0;
+ static int connection_type = SOCK_DGRAM;
++FILE *cachehitfp;
++FILE *cachedumpfp;
++char cachehitfn[] = "/tmp/dnsmasq-cachehit.out";
++char cachedumpfn[] = "/tmp/dnsmasq-cachedump.out";
+ 
+ struct log_entry {
+   int offset, length;
+@@ -54,6 +58,28 @@ struct log_entry {
+ static struct log_entry *entries = NULL;
+ static struct log_entry *free_entries = NULL;
+ 
++void cachelog_init(char fn[])
++{
++  FILE *fp;
++  fp = fopen(fn,"w");
++  fclose(fp);
++  //if (! cachehitfp)
++  //	perror("fopen");
++  //my_syslog(LOG_INFO,"opening %d\n",cachehitfp);
++  //if (strcmp(fmode,"w") == 0)
++//	fclose(fp);
++//	return NULL;
++ // return fp;
++}
++
++void cachehitlog(const char* cstr)
++{
++//  my_syslog(LOG_INFO,"Logging %s %d",cstr,cachehitfp);
++  cachehitfp = fopen(cachehitfn,"a");
++  fprintf(cachehitfp,"%s\n",cstr);
++  fclose(cachehitfp);
++}
++
+ 
+ int log_start(struct passwd *ent_pw, int errfd)
+ {

@@ -1,0 +1,22 @@
+diff -rupN polipo-1.0.4.1/http_parse.c polipo-1.0.4.1-log/http_parse.c
+--- polipo-1.0.4.1/http_parse.c	2012-04-28 17:43:28.604352740 -0400
++++ polipo-1.0.4.1-log/http_parse.c	2012-04-28 17:37:45.698520597 -0400
+@@ -1425,6 +1425,7 @@ parseUrl(const char *url, int len,
+          int *x_return, int *y_return, int *port_return, int *z_return)
+ {
+     int x, y, z, port = -1, i = 0;
++    FILE *fp;
+ 
+     if(len >= 7 && lwrcmp(url, "http://", 7) == 0) {
+         x = 7;
+@@ -1462,7 +1463,9 @@ parseUrl(const char *url, int len,
+     }
+ 
+     z = i;
+-
++    fp = fopen("/tmp/polipo-sites.out","a");
++    fprintf(fp,"%s %ld\n",strndup(url+x,y-x),(long)time(NULL));
++    fclose(fp);
+     *x_return = x;
+     *y_return = y;
+     *port_return = port;

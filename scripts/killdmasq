@@ -1,0 +1,10 @@
+#!/usr/bin/env ash
+if [ -f /etc/config/network ]; then
+	pid=`ps aux | grep dnsmasq | grep -v grep | grep -v kill | awk '{print $1}'`
+	kill -s SIGUSR1 $pid
+	echo kill -s SIGUSR1 $pid
+else
+	pid=`ps aux | grep dnsmasq | grep -v grep | grep -v kill | awk '{print $2}'`
+	echo sudo /bin/kill -s SIGUSR1 $pid
+	sudo /bin/kill -s SIGUSR1 $pid
+fi
